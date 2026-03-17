@@ -79,6 +79,7 @@ CREATE TABLE IF NOT EXISTS splits (
 def init_db(conn):
     with conn.cursor() as cur:
         cur.execute(SCHEMA)
+        cur.execute("ALTER TABLE splits ADD COLUMN IF NOT EXISTS category TEXT;")
     conn.commit()
 
 
@@ -225,12 +226,14 @@ def cmd_add(conn, oris_event_id):
         if place in ("DNS",):
             continue
 
+        category = (res.get("ClassDesc") or res.get("ClassName") or "").strip()
         members_by_regno[reg_no] = {
             "name": name,
             "reg_no": reg_no,
             "class_id": class_id,
             "oris_user_id": user_id,
             "res_time": res_time,
+            "category": category,
         }
         if class_id:
             class_ids.add(class_id)
@@ -292,6 +295,7 @@ def cmd_add(conn, oris_event_id):
             "last_leg": last_leg,
             "club_rank": rank,
             "points": pts,
+            "category": info.get("category", ""),
         })
 
     # 5. Persist to DB
@@ -317,23 +321,24 @@ def cmd_add(conn, oris_event_id):
             member_id = cur.fetchone()[0]
 
             cur.execute("""
-                INSERT INTO splits (race_id, member_id, last_leg_seconds, club_rank, points)
-                VALUES (%s, %s, %s, %s, %s)
+                INSERT INTO splits (race_id, member_id, last_leg_seconds, club_rank, points, category)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 ON CONFLICT (race_id, member_id) DO UPDATE
                     SET last_leg_seconds=EXCLUDED.last_leg_seconds,
                         club_rank=EXCLUDED.club_rank,
-                        points=EXCLUDED.points
-            """, (race_id, member_id, e["last_leg"], e["club_rank"], e["points"]))
+                        points=EXCLUDED.points,
+                        category=EXCLUDED.category
+            """, (race_id, member_id, e["last_leg"], e["club_rank"], e["points"], e["category"] or None))
 
     conn.commit()
     print(f"Saved {len(entries)} result(s) for race {oris_event_id}.\n")
 
     # 6. Print results table
     table = [
-        [e["club_rank"], e["name"], e["reg_no"], format_seconds(e["last_leg"]), e["points"]]
+        [e["club_rank"], e["name"], e["reg_no"], e.get("category") or "", format_seconds(e["last_leg"]), e["points"]]
         for e in entries
     ]
-    print(tabulate(table, headers=["Rank", "Name", "Reg", "Last Split", "Points"], tablefmt="rounded_outline"))
+    print(tabulate(table, headers=["Rank", "Name", "Reg", "Category", "Last Split", "Points"], tablefmt="rounded_outline"))
 
 
 # ---------------------------------------------------------------------------
@@ -485,7 +490,7 @@ def cmd_show(conn, oris_event_id):
 
     with conn.cursor() as cur:
         cur.execute("""
-            SELECT s.club_rank, m.name, m.reg_number, s.last_leg_seconds, s.points
+            SELECT s.club_rank, m.name, m.reg_number, s.category, s.last_leg_seconds, s.points
             FROM splits s
             JOIN members m ON m.id = s.member_id
             WHERE s.race_id = %s
@@ -498,10 +503,10 @@ def cmd_show(conn, oris_event_id):
         return
 
     table = [
-        [row[0], row[1], row[2], format_seconds(row[3]), row[4]]
+        [row[0], row[1], row[2], row[3] or "", format_seconds(row[4]), row[5]]
         for row in rows
     ]
-    print(tabulate(table, headers=["Rank", "Name", "Reg", "Last Split", "Points"], tablefmt="rounded_outline"))
+    print(tabulate(table, headers=["Rank", "Name", "Reg", "Category", "Last Split", "Points"], tablefmt="rounded_outline"))
 
 
 # ---------------------------------------------------------------------------
