@@ -1,64 +1,80 @@
 # oob-sprint
 
-Last-split time tracker and points system for **OOB TJ Lokomotiva Trutnov** (club 95) orienteering members.
+CLI tool that tracks **last-split times** (last control → finish) for orienteering club members across races, assigns points, and builds a season leaderboard. Uses the [ORIS API](https://oris.ceskyorientak.cz) — the Czech orienteering results system.
 
-After each race the tool fetches splits from the [ORIS API](https://oris.ceskyorientak.cz), extracts each member's last leg (last control → finish), ranks them, assigns points, and stores everything in PostgreSQL.
+Default club: **OOB TJ Lokomotiva Trutnov** (club ID 95).
 
 ---
 
-## Setup
+## Requirements
 
-### 1. Install dependencies
+- Python 3.9+
+- PostgreSQL
 
 ```bash
 pip install -r requirements.txt
 ```
 
-> Requires Python 3.9+. Uses `psycopg` (v3) with binary extras. If you prefer psycopg2, replace `psycopg[binary]` with `psycopg2-binary` in `requirements.txt`.
+---
 
-### 2. Create a PostgreSQL database
+## Setup
+
+**1. Create the database:**
 
 ```bash
 createdb oob_sprint
 ```
 
-### 3. Configure the connection
-
-Create a `.env` file in the project directory:
+**2. Create a `.env` file:**
 
 ```
 DATABASE_URL=postgresql://user:password@localhost/oob_sprint
-```
-
-Or export it as an environment variable:
-
-```bash
-export DATABASE_URL=postgresql://user:password@localhost/oob_sprint
 ```
 
 The schema is created automatically on first run.
 
 ---
 
-## Usage
+## Changing the club
+
+Edit `OOB_CLUB_ID` near the top of `oob_sprint.py`:
+
+```python
+OOB_CLUB_ID = 95  # OOB TJ Lokomotiva Trutnov
+```
+
+Look up club IDs via the ORIS API:
+
+```
+https://oris.ceskyorientak.cz/API/?format=json&method=getCSOSClubList
+```
+
+---
+
+## Commands
+
+### List today's races
+
+```bash
+python3 oob_sprint.py day
+```
+
+Shows all orienteering races today with a count of club members per race.
+
+### List races on a specific date
+
+```bash
+python3 oob_sprint.py day 2025-04-06
+```
 
 ### Import a race
 
 ```bash
-python oob_sprint.py add 8511
+python3 oob_sprint.py add 8511
 ```
 
-This will:
-1. Fetch event info from ORIS
-2. Fetch OOB member results (club 95)
-3. Fetch splits for each category containing OOB members
-4. Extract each member's last-leg time (last control → finish)
-5. Rank by last-leg time (fastest first)
-6. Assign points (winner = 100, others = floor(winner_time / their_time × 100), minimum 10)
-7. Save everything to the database
-8. Print the race results table
+Fetches event info and splits from ORIS, computes last-leg times and points for all club members, saves to the database, and prints the results table.
 
-Example output:
 ```
 ╭──────┬────────────────────┬────────┬────────────┬────────╮
 │ Rank │ Name               │ Reg    │ Last Split │ Points │
@@ -69,75 +85,33 @@ Example output:
 ╰──────┴────────────────────┴────────┴────────────┴────────╯
 ```
 
-### View the leaderboard
+### Season leaderboard
 
 ```bash
-python oob_sprint.py leaderboard
+python3 oob_sprint.py leaderboard
 ```
 
-Shows cumulative points across all races, sorted by total.
+Cumulative points across all imported races, sorted by total.
 
 ### List tracked races
 
 ```bash
-python oob_sprint.py races
+python3 oob_sprint.py races
 ```
 
-### Show results for a specific race
+### Show results for a race
 
 ```bash
-python oob_sprint.py show 8511
+python3 oob_sprint.py show 8511
 ```
 
 ---
 
 ## Points formula
 
-| Situation      | Points                                      |
-|----------------|---------------------------------------------|
-| Race winner    | 100                                         |
-| Other finisher | `floor(winner_time / your_time × 100)`      |
-| Minimum        | 10 (for any finisher, even on a rough day)  |
-| DNF / DSQ      | Not included (no split data)                |
+- **Winner:** 100 points
+- **Others:** `floor(winner_time / your_time × 100)`
+- **Minimum:** 10 points
+- **DNF / DSQ:** skipped (no split data)
 
----
-
-## Database schema
-
-```sql
-CREATE TABLE races (
-    id SERIAL PRIMARY KEY,
-    oris_id INTEGER UNIQUE NOT NULL,
-    name TEXT NOT NULL,
-    date DATE NOT NULL,
-    discipline TEXT,
-    location TEXT
-);
-
-CREATE TABLE members (
-    id SERIAL PRIMARY KEY,
-    oris_id INTEGER UNIQUE NOT NULL,
-    name TEXT NOT NULL,
-    reg_number TEXT
-);
-
-CREATE TABLE splits (
-    id SERIAL PRIMARY KEY,
-    race_id INTEGER REFERENCES races(id),
-    member_id INTEGER REFERENCES members(id),
-    last_leg_seconds INTEGER NOT NULL,
-    club_rank INTEGER NOT NULL,
-    points INTEGER NOT NULL,
-    UNIQUE(race_id, member_id)
-);
-```
-
----
-
-## ORIS API endpoints used
-
-| Method           | Purpose                                    |
-|------------------|--------------------------------------------|
-| `getEvent`       | Race name, date, discipline, location      |
-| `getEventResults`| Results filtered to club 95                |
-| `getSplits`      | Per-control split times for a category     |
+A 2:00 last leg when the winner ran 1:42 → `floor(102/120 × 100)` = 85 points.
